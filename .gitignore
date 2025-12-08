@@ -76,9 +76,8 @@ celerybeat.pid
 # Environments
 .env
 .venv
-env/
+
 venv/
-ENV/
 env.bak/
 venv.bak/
 
@@ -112,3 +111,21 @@ cython_debug/
 ~*
 *~
 .DS_Store
+
+
+# Specficially ignore pdbfiles in proaffinity
+pdbfiles
+*.cif
+*.cif.gz
+*.log
+*.png
+*.pml
+*.json
+/sim_params_6bno
+/sim_params_8erq
+*.zip
+/workspace_1Q5R
+/workspace_6BNO
+/workspace_8ERQ
+test.py
+test_simularium.ipynb

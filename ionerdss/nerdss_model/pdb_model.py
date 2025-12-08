@@ -144,12 +144,23 @@ class PDBModel(Model):
         structure = parser.get_structure(structure_id, self.pdb_file)
         return structure
 
-    def coarse_grain(self, distance_cutoff=0.35, residue_cutoff=3, show_coarse_grained_structure=False, save_pymol_script=False, standard_output=False):
+    def coarse_grain(
+        self,
+        distance_cutoff=0.35,
+        residue_cutoff=3,
+        predict_affinity=False,
+        adfr_path=None,
+        show_coarse_grained_structure=False,
+        save_pymol_script=False,
+        standard_output=False
+    ) -> None:
         """Coarse grains the PDB structure by detecting binding interfaces between chains based on atomic distances.
 
         Args:
             distance_cutoff (float, optional): Max distance (nm) for atoms to be considered in contact. Defaults to 0.35.
             residue_cutoff (int, optional): Minimum residue pair count to be considered a valid interface. Defaults to 3.
+            predict_affinity (bool, optional): Whether to predict binding affinity using ProAffinity-GNN. Defaults to False.
+            adfr_path (str, optional): Path to ADFR prepare_receptor tool. Required if predict_affinity is True. Defaults to None.
             show_coarse_grained_structure (bool, optional): Whether to visualize the coarse-grained structure. Defaults to False.
             save_pymol_script (bool, optional): Whether to save a PyMOL script for visualization. Defaults to False.
             standard_output (bool, optional): Whether to print detected interfaces. Defaults to False.
@@ -263,8 +274,6 @@ class PDBModel(Model):
             interface2_coords = []
             interface2_types = []
 
-            residue_pairs = {}
-
             # Collect interface residues based on KDTree results
             for idx1, neighbors in enumerate(indices):
                 if neighbors:
@@ -278,17 +287,40 @@ class PDBModel(Model):
                             interface2.append(residue_ids_chain2[idx2])
                             interface2_coords.append(ca_coords_chain2[idx2])
                             interface2_types.append(residue_types_chain2[idx2])
-                    
-                        pair_key = (residue_ids_chain1[idx1], residue_ids_chain2[idx2])
-                        energy_key = (residue_types_chain1[idx1], residue_types_chain2[idx2])
-
-                        if pair_key not in residue_pairs:
-                            residue_pairs[pair_key] = energy_table.get(energy_key, 0.0)
-
-            total_energy = sum(residue_pairs.values())
-
+            
             # Store results if any interfaces were found
             if len(interface1) >= residue_cutoff and len(interface2) >= residue_cutoff:
+                # Calculate or assume binding energy (only if valid interfaces exist)
+                if predict_affinity:
+                    # Use ProAffinity to predict binding energy from the already-downloaded PDB file
+                    try:
+                        from ionerdss.model.proaffinity_predictor import predict_proaffinity_binding_energy_from_file
+                        chain1_id = self.all_chains[i].id
+                        chain2_id = self.all_chains[j].id
+                        binding_energy = predict_proaffinity_binding_energy_from_file(
+                            pdb_file=self.pdb_file,
+                            chains=f"{chain1_id},{chain2_id}",
+                            verbose=False,
+                            adfr_path=adfr_path
+                        )
+                        if np.isnan(binding_energy):
+                            # Fall back to default if prediction fails
+                            total_energy = -16 * 8.314/1000 * 298  # -16RT in kJ/mol
+                            if standard_output:
+                                print(f"Warning: ProAffinity prediction failed for chains {chain1_id}-{chain2_id}, using default energy")
+                        else:
+                            total_energy = binding_energy
+                            if standard_output:
+                                print(f"Predicted binding energy for chains {chain1_id}-{chain2_id}: {total_energy:.2f} kJ/mol")
+                    except Exception as e:
+                        # Fall back to default if prediction fails
+                        total_energy = -16 * 8.314/1000 * 298  # -16RT in kJ/mol
+                        if standard_output:
+                            print(f"Warning: ProAffinity prediction error for chains {self.all_chains[i].id}-{self.all_chains[j].id}: {e}")
+                else:
+                    # Assume total energy equals -16 RT when affinity prediction is skipped.
+                    total_energy = -16 * 8.314/1000 * 298  # -16RT in kJ/mol
+
                 avg_coords1 = np.mean(interface1_coords, axis=0)
                 self.all_interfaces[i].append(self.all_chains[j].id)
                 self.all_interfaces_coords[i].append(Coords(*avg_coords1))
@@ -323,7 +355,7 @@ class PDBModel(Model):
                 print("  Interface Coordinates: ")
                 for j, interface_coord in enumerate(self.all_interfaces_coords[i]):
                     print(f"    {interface_coord}")
-                    print(f"    Interface Energy: {self.all_interface_energies[i][j]:.2f}")
+                    print(f"    Interface Energy: {self.all_interface_energies[i][j]:.2f} kJ/mol")
 
         # Save PyMOL script
         if save_pymol_script:
