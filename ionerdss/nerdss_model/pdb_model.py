@@ -72,13 +72,13 @@ class PDBModel(Model):
         self.chains_group = []  # Groups chains with the same MOL_ID or entity_id or similar stucture as homologous
 
         # used to store the information of the molecules and interfaces for NERDSS model
-        self.molecule_list = []
+        self.molecule_list: list[CoarseGrainedMolecule] = []
         self.molecules_template_list = []
-        self.interface_list = []
+        self.interface_list: list[BindingInterface] = []
         self.interface_template_list = []
         self.binding_chains_pairs = []
         self.binding_energies = []
-        self.reaction_list = []
+        self.reaction_list: list[ReactionType] = []
         self.reaction_template_list = []
 
     def download_pdb(self) -> str:
@@ -173,9 +173,8 @@ class PDBModel(Model):
         self.all_interfaces_residues = []
         self.all_chains_radius = []
 
-        energy_table = self._get_default_energy_table()
-        self.interface_energies = []
-        self.all_interface_energies = []
+        self.interface_energies: list[float] = []
+        self.all_interface_energies: list[list[float]] = []
 
         # Initialize interface lists
         num_chains = len(self.all_chains)
@@ -610,9 +609,9 @@ class PDBModel(Model):
         print("Homologous chain groups identified:")
         print(self.chains_group)
 
-        self.molecule_list = []
+        self.molecule_list: list[CoarseGrainedMolecule] = []
         self.molecules_template_list = []
-        self.interface_list = []
+        self.interface_list: list[BindingInterface] = []
         self.interface_template_list = []
         self.interface_signatures = []
 
@@ -634,7 +633,7 @@ class PDBModel(Model):
                 is_existing_mol, mol_index = self._is_existing_mol(mol_name)
                 if is_existing_mol:
                     # print(f"This is an existing molecule {mol_name}")
-                    molecule = self.molecule_list[mol_index]
+                    molecule: CoarseGrainedMolecule = self.molecule_list[mol_index]
                     molecule.radius = self.all_chains_radius[self.all_chains.index([chain for chain in self.all_chains if chain.id == mol_name][0])]
                     molecule.diffusion_translation, molecule.diffusion_rotation = self._compute_diffusion_constants_nm_us(molecule.radius / 10.0)
                     molecule.my_template.diffusion_translation, molecule.my_template.diffusion_rotation = molecule.diffusion_translation, molecule.diffusion_rotation
@@ -967,8 +966,6 @@ class PDBModel(Model):
 
         self._build_reactions()
 
-        self._rescale_energies()
-
         if standard_output:
             print("Molecules Template and Reactions Template After Regularization:")
             for molecule_template in self.molecules_template_list:
@@ -989,22 +986,6 @@ class PDBModel(Model):
             self.save_regularized_coarse_grained_structure()
 
         self._generate_model_data()
-
-    def _rescale_energies(self):
-        """
-        Rescales the energies of all reactions in the model by setting the most stable interaction KD=10nM.
-        """
-        most_stable_energy = 1E15
-        for reaction in self.reaction_template_list:
-            if reaction.energy < most_stable_energy:
-                most_stable_energy = reaction.energy
-        kd = 10E-3  # unit uM; 10 nM
-        c0 = kd / (np.exp(most_stable_energy)) # unit uM
-
-        for reaction in self.reaction_template_list:
-            reaction.kd = c0 * np.exp(reaction.energy)
-            reaction.ka = 10.0 # nm^3/us
-            reaction.kb = reaction.kd * reaction.ka * 0.6022 # /s
 
     def _generate_model_data(self) -> None:
         """Generates molecule types and reactions and saves the model."""
@@ -1032,8 +1013,8 @@ class PDBModel(Model):
             norm2 = getattr(reaction_template, 'norm2', [])
             norm1 = tuple(n for n in norm1)
             norm2 = tuple(n for n in norm2)
-            ka = getattr(reaction_template, 'ka', 0.0)
-            kb = getattr(reaction_template, 'kb', 0.0)
+            ka: float = getattr(reaction_template, 'ka', 0.0)
+            kb: float = getattr(reaction_template, 'kb', 0.0)
             reaction = ReactionType(name=reaction_template.expression, binding_radius=brad, binding_angles=bind_anlges, norm1=norm1, norm2=norm2, ka=ka, kb=kb)
             reactions.append(reaction)
 
@@ -1264,10 +1245,10 @@ class PDBModel(Model):
         5. Ensures `ReactionTemplate` objects exist, creating them if necessary.
         """
         for binding_pair in self.binding_chains_pairs:
-            molecule_1 = [mol for mol in self.molecule_list if mol.name == binding_pair[0]][0]
-            molecule_2 = [mol for mol in self.molecule_list if mol.name == binding_pair[1]][0]
-            interface_1 = [interface for interface in molecule_1.interface_list if interface.name == binding_pair[1]][0]
-            interface_2 = [interface for interface in molecule_2.interface_list if interface.name == binding_pair[0]][0]
+            molecule_1: CoarseGrainedMolecule = [mol for mol in self.molecule_list if mol.name == binding_pair[0]][0]
+            molecule_2: CoarseGrainedMolecule = [mol for mol in self.molecule_list if mol.name == binding_pair[1]][0]
+            interface_1: BindingInterface = [interface for interface in molecule_1.interface_list if interface.name == binding_pair[1]][0]
+            interface_2: BindingInterface = [interface for interface in molecule_2.interface_list if interface.name == binding_pair[0]][0]
 
             # build the reaction
             reaction = Reaction()
@@ -1296,11 +1277,13 @@ class PDBModel(Model):
             reaction.binding_radius = sigma_magnitude
 
             # calculate the rates
-            energy = interface_1.energy
+            RT: float = 8.314 * 298 / 1000 # kJ/mol at 298 K
+            energy: float = interface_1.energy   # kJ/mol
+            C0: float = 0.6022 # unit nm^-3 / M
 
-            reaction.kd = np.exp(energy) * 1e6 # unit uM
-            reaction.ka = 10 # unit nm^3/us
-            reaction.kb = reaction.kd * reaction.ka * 0.6022 # unit /s
+            reaction.kd = np.exp(energy / RT) # unit M
+            reaction.ka = 1200 # unit nm^3/us
+            reaction.kb = reaction.kd * reaction.ka * C0 * 1e6 # unit /s
             reaction.energy = energy
 
             self.reaction_list.append(reaction)
@@ -1880,7 +1863,7 @@ class CoarseGrainedMolecule:
         self.name = name
         self.my_template = None
         self.coord = None
-        self.interface_list = []
+        self.interface_list: list[BindingInterface] = []
         self.normal_point = None
         self.diffusion_translation = None
         self.diffusion_rotation = None
@@ -1929,7 +1912,7 @@ class BindingInterface:
         self.my_template = None
         self.my_residues = []
         self.signature = {}
-        self.energy = None
+        self.energy: float = None
 
     def __str__(self):
         return (f"BindingInterface: {self.name}\n"
@@ -2013,10 +1996,10 @@ class Reaction:
         self.norm1 = None
         self.norm2 = None
         self.my_template = None
-        self.kd = None
-        self.ka = None
-        self.kb = None
-        self.energy = None
+        self.kd: float = None
+        self.ka: float = None
+        self.kb: float = None
+        self.energy: float = None
 
     def __str__(self):
         return (f"Reaction: {self.expression}\n"
