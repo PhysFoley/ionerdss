@@ -9,8 +9,10 @@ The `coarse_grain` method now supports optional binding affinity prediction usin
 ### Option 1: Fixed Energy (Default, Fast)
 ```python
 model = PDBModel(pdb_id="8erq", save_dir="./output")
+# to use existing pdb files
+# model = PDBModel(pdb_file="yourPDB.pdb", save_dir="./output")
 model.coarse_grain()
-# Uses fixed energy: -16 RT ≈ -39.5 kJ/mol
+# Uses fixed energy: -16 RT ≈ -39.6 kJ/mol
 ```
 
 ### Option 2: Predicted Energy (Accurate, Slower)

@@ -368,7 +368,9 @@ def convert_pka_dG(pka, temperature=298.15):
 def predict_proaffinity_binding_energy_from_file(pdb_file, chains,
                                                   model_weights_path=None,
                                                   adfr_path=None,
-                                                  verbose=False):
+                                                  verbose=False,
+                                                  esm_model=None,
+                                                  esm_tokenizer=None):
     """
     Predict binding affinity using ProAffinity-GNN from a PDB file.
     
@@ -383,6 +385,8 @@ def predict_proaffinity_binding_energy_from_file(pdb_file, chains,
         model_weights_path (str): Path to model.pkl file (default: same directory as this module)
         adfr_path (str): Path to ADFR prepare_receptor tool
         verbose (bool): Whether to print status messages
+        esm_model: Pre-loaded ESM2 model (optional, for batch processing)
+        esm_tokenizer: Pre-loaded ESM2 tokenizer (optional, for batch processing)
         
     Returns:
         float: Predicted binding energy in kJ/mol (or np.nan if error)
@@ -414,7 +418,13 @@ def predict_proaffinity_binding_energy_from_file(pdb_file, chains,
             raise Exception(f"Model weights not found at: {model_weights_path}")
         
         # Run inference (returns energy in kJ/mol directly)
-        dG_kj_mol = run_proaffinity_inference(pdbqtfile, chains, weights_path=model_weights_path, verbose=verbose)
+        dG_kj_mol = run_proaffinity_inference(
+            pdbqtfile, chains, 
+            weights_path=model_weights_path, 
+            verbose=verbose,
+            esm_model=esm_model,
+            esm_tokenizer=esm_tokenizer
+        )
         
         if verbose:
             print(f"Predicted binding energy: {dG_kj_mol:.4f} kJ/mol")
@@ -424,6 +434,64 @@ def predict_proaffinity_binding_energy_from_file(pdb_file, chains,
     except Exception as e:
         print(f"Error in ProAffinity prediction from file {pdb_file}: {str(e)}")
         return np.nan
+
+
+def predict_proaffinity_binding_energy_batch(predictions_list,
+                                             model_weights_path=None,
+                                             adfr_path=None,
+                                             verbose=False):
+    """
+    Batch predict binding affinities for multiple chain pairs from the same PDB file.
+    Loads ESM2 model only once for efficiency.
+    
+    Args:
+        predictions_list (list): List of dicts with keys 'pdb_file' and 'chains'
+            Example: [{'pdb_file': 'path/to/file.pdb', 'chains': 'A,B'}, ...]
+        model_weights_path (str): Path to model.pkl file (default: same directory as this module)
+        adfr_path (str): Path to ADFR prepare_receptor tool
+        verbose (bool): Whether to print status messages
+        
+    Returns:
+        list: List of predicted binding energies in kJ/mol (np.nan for failed predictions)
+    """
+    if not predictions_list:
+        return []
+    
+    try:
+        # Load ESM2 model once
+        if verbose:
+            print("Loading ESM2 model (this will be reused for all predictions)...")
+        from .ProAffinity_GNN_inference import load_esm2_model
+        esm_tokenizer, esm_model = load_esm2_model(use_cache=True)
+        
+        results = []
+        for i, pred_info in enumerate(predictions_list):
+            pdb_file = pred_info['pdb_file']
+            chains = pred_info['chains']
+            
+            if verbose:
+                print(f"\nPrediction {i+1}/{len(predictions_list)}: {pdb_file} chains {chains}")
+            
+            # Use the pre-loaded model for each prediction
+            dG = predict_proaffinity_binding_energy_from_file(
+                pdb_file=pdb_file,
+                chains=chains,
+                model_weights_path=model_weights_path,
+                adfr_path=adfr_path,
+                verbose=verbose,
+                esm_model=esm_model,
+                esm_tokenizer=esm_tokenizer
+            )
+            results.append(dG)
+        
+        if verbose:
+            print(f"\nCompleted {len(results)} predictions using shared ESM2 model")
+        
+        return results
+        
+    except Exception as e:
+        print(f"Error in batch prediction: {str(e)}")
+        return [np.nan] * len(predictions_list)
 
 
 def predict_proaffinity_binding_energy(pdb_id, chains, 

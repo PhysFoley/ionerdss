@@ -216,6 +216,10 @@ class PDBModel(Model):
         # Precompute bounding boxes for all chains
         bounding_boxes = [compute_bounding_box(chain) for chain in self.all_chains]
 
+        # Store chain pairs that need affinity prediction
+        affinity_prediction_pairs = []
+        pair_to_indices = {}  # Maps (i,j) to index in affinity_prediction_pairs
+        
         # Helper function to process a pair of chains
         def process_chain_pair(i, j):
             if self.all_COM_chains_coords[i] is None or self.all_COM_chains_coords[j] is None:
@@ -290,53 +294,99 @@ class PDBModel(Model):
             
             # Store results if any interfaces were found
             if len(interface1) >= residue_cutoff and len(interface2) >= residue_cutoff:
-                # Calculate or assume binding energy (only if valid interfaces exist)
-                if predict_affinity:
-                    # Use ProAffinity to predict binding energy from the already-downloaded PDB file
-                    try:
-                        from .proaffinity_predictor import predict_proaffinity_binding_energy_from_file
-                        chain1_id = self.all_chains[i].id
-                        chain2_id = self.all_chains[j].id
-                        binding_energy = predict_proaffinity_binding_energy_from_file(
-                            pdb_file=self.pdb_file,
-                            chains=f"{chain1_id},{chain2_id}",
-                            verbose=False,
-                            adfr_path=adfr_path,
-                        )
-                        if np.isnan(binding_energy):
-                            # Fall back to default if prediction fails
-                            total_energy = -16 * 8.314/1000 * 298  # -16RT in kJ/mol
-                            if standard_output:
-                                print(f"Warning: ProAffinity prediction failed for chains {chain1_id}-{chain2_id}, using default energy")
-                        else:
-                            total_energy = binding_energy
-                            if standard_output:
-                                print(f"Predicted binding energy for chains {chain1_id}-{chain2_id}: {total_energy:.2f} kJ/mol")
-                    except Exception as e:
-                        # Fall back to default if prediction fails
-                        total_energy = -16 * 8.314/1000 * 298  # -16RT in kJ/mol
-                        if standard_output:
-                            print(f"Warning: ProAffinity prediction error for chains {self.all_chains[i].id}-{self.all_chains[j].id}: {e}")
-                else:
-                    # Assume total energy equals -16 RT when affinity prediction is skipped.
-                    total_energy = -16 * 8.314/1000 * 298  # -16RT in kJ/mol
-
+                # Store interface information for later processing
                 avg_coords1 = np.mean(interface1_coords, axis=0)
-                self.all_interfaces[i].append(self.all_chains[j].id)
-                self.all_interfaces_coords[i].append(Coords(*avg_coords1))
-                self.all_interfaces_residues[i].append(sorted(interface1))
-                self.all_interface_energies[i].append(total_energy)
                 avg_coords2 = np.mean(interface2_coords, axis=0)
-                self.all_interfaces[j].append(self.all_chains[i].id)
-                self.all_interfaces_coords[j].append(Coords(*avg_coords2))
-                self.all_interfaces_residues[j].append(sorted(interface2))
-                self.all_interface_energies[j].append(total_energy)
+                
+                # Store interface data temporarily (energy will be added later)
+                result_data = {
+                    'i': i,
+                    'j': j,
+                    'interface1': sorted(interface1),
+                    'interface2': sorted(interface2),
+                    'avg_coords1': avg_coords1,
+                    'avg_coords2': avg_coords2,
+                }
+                
+                # If affinity prediction is enabled, store chain pair info for batch processing
+                if predict_affinity:
+                    chain1_id = self.all_chains[i].id
+                    chain2_id = self.all_chains[j].id
+                    pair_idx = len(affinity_prediction_pairs)
+                    affinity_prediction_pairs.append({
+                        'pdb_file': self.pdb_file,
+                        'chains': f"{chain1_id},{chain2_id}",
+                        'result_data': result_data
+                    })
+                    pair_to_indices[(i, j)] = pair_idx
+                else:
+                    # Use default energy immediately
+                    result_data['total_energy'] = -16 * 8.314/1000 * 298  # -16RT in kJ/mol
+                    
+                return result_data
+            return None
 
-        # Parallelize chain pair processing
+        # Parallelize chain pair processing to detect interfaces
         with ThreadPoolExecutor() as executor:
             futures = [executor.submit(process_chain_pair, i, j) for i in range(num_chains - 1) for j in range(i + 1, num_chains)]
+            interface_results = []
             for future in futures:
-                future.result()  # Wait for all tasks to complete
+                result = future.result()
+                if result is not None:
+                    interface_results.append(result)
+        
+        # Batch predict affinities if needed
+        if predict_affinity and affinity_prediction_pairs:
+            if standard_output:
+                print(f"Running batch affinity prediction for {len(affinity_prediction_pairs)} chain pairs...")
+                print("Loading ESM2 model once for all predictions...")
+            
+            try:
+                from .proaffinity_predictor import predict_proaffinity_binding_energy_batch
+                
+                # Run batch predictions
+                binding_energies = predict_proaffinity_binding_energy_batch(
+                    predictions_list=affinity_prediction_pairs,
+                    adfr_path=adfr_path,
+                    verbose=standard_output
+                )
+                
+                # Assign predicted energies back to results
+                for pair_info, binding_energy in zip(affinity_prediction_pairs, binding_energies):
+                    result_data = pair_info['result_data']
+                    if np.isnan(binding_energy):
+                        # Fall back to default if prediction fails
+                        result_data['total_energy'] = -16 * 8.314/1000 * 298  # -16RT in kJ/mol
+                        if standard_output:
+                            print(f"Warning: ProAffinity prediction failed for chains {pair_info['chains']}, using default energy")
+                    else:
+                        result_data['total_energy'] = binding_energy
+                        if standard_output:
+                            print(f"Predicted binding energy for chains {pair_info['chains']}: {binding_energy:.2f} kJ/mol")
+                            
+            except Exception as e:
+                # Fall back to default energies if batch prediction fails
+                if standard_output:
+                    print(f"Warning: Batch affinity prediction failed: {e}")
+                    print("Using default energies for all chain pairs")
+                for pair_info in affinity_prediction_pairs:
+                    pair_info['result_data']['total_energy'] = -16 * 8.314/1000 * 298
+        
+        # Now populate the interface lists with the results
+        for result_data in interface_results:
+            i = result_data['i']
+            j = result_data['j']
+            total_energy = result_data['total_energy']
+            
+            self.all_interfaces[i].append(self.all_chains[j].id)
+            self.all_interfaces_coords[i].append(Coords(*result_data['avg_coords1']))
+            self.all_interfaces_residues[i].append(result_data['interface1'])
+            self.all_interface_energies[i].append(total_energy)
+            
+            self.all_interfaces[j].append(self.all_chains[i].id)
+            self.all_interfaces_coords[j].append(Coords(*result_data['avg_coords2']))
+            self.all_interfaces_residues[j].append(result_data['interface2'])
+            self.all_interface_energies[j].append(total_energy)
 
         for i in range(num_chains):
             sorted_indices = sorted(range(len(self.all_interfaces[i])), key=lambda k: self.all_interfaces[i][k])
