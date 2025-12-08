@@ -73,7 +73,9 @@ class TestPDBModelOutput(unittest.TestCase):
         return pdb_model
 
     def run_model_test(self, pdb_id, tol=0.01):
-        expected_path = Path(f"data/{pdb_id}_model.json")
+        # Get the path to the data directory relative to this test file
+        test_dir = Path(__file__).parent.parent
+        expected_path = test_dir / "data" / f"{pdb_id}_model.json"
         actual_path = self.save_folder / f"{pdb_id}_model.json"
 
         pdb_model = self.build_pdb_model(pdb_id)
