@@ -40,7 +40,7 @@ model.coarse_grain(
 
 | Feature | Fixed Energy | Predicted Energy |
 |---------|--------------|------------------|
-| Speed | Fast | Slower (~10-30s per pair) |
+| Speed | Fast | Slower (~30s per pair + ~30s for PDBQT conversion) |
 | Accuracy | Approximation | ML-predicted |
 | Setup | None | Requires ADFR |
 | Use Case | Quick testing | Production runs |
