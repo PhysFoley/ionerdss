@@ -9,7 +9,7 @@ The implementation uses the already-downloaded PDB file, avoiding redundant down
 import sys
 sys.path.append("..")
 
-from ionerdss.model.pdb_model import PDBModel
+from ionerdss.nerdss_model.pdb_model import PDBModel
 
 # Example 1: Using default fixed binding energy (-16 RT)
 print("=" * 80)

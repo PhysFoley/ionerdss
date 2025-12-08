@@ -294,14 +294,14 @@ class PDBModel(Model):
                 if predict_affinity:
                     # Use ProAffinity to predict binding energy from the already-downloaded PDB file
                     try:
-                        from ionerdss.model.proaffinity_predictor import predict_proaffinity_binding_energy_from_file
+                        from .proaffinity_predictor import predict_proaffinity_binding_energy_from_file
                         chain1_id = self.all_chains[i].id
                         chain2_id = self.all_chains[j].id
                         binding_energy = predict_proaffinity_binding_energy_from_file(
                             pdb_file=self.pdb_file,
                             chains=f"{chain1_id},{chain2_id}",
                             verbose=False,
-                            adfr_path=adfr_path
+                            adfr_path=adfr_path,
                         )
                         if np.isnan(binding_energy):
                             # Fall back to default if prediction fails

@@ -8,7 +8,7 @@ import shutil
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from ionerdss.model.pdb_model import PDBModel
+from ionerdss.nerdss_model.pdb_model import PDBModel
 
 
 class TestAffinityPrediction(unittest.TestCase):
@@ -118,7 +118,7 @@ class TestAffinityPredictionWithProAffinity(unittest.TestCase):
             distance_cutoff=0.35,
             residue_cutoff=3,
             predict_affinity=True,
-            adfr_path=self.adfr_path
+            adfr_path=self.adfr_path,
         )
         
         # Check that interfaces were detected
