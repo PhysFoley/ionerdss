@@ -54,7 +54,7 @@ For extended examples, see the [tutorials](https://ionerdss.readthedocs.io/en/la
 
 ### Run a quick trial with our server
 
-Go to the [NERDSS server](http://52.15.142.249:5000/).
+Go to the [NERDSS server](https://nerdssdemo.org/).
 
 ---
 
